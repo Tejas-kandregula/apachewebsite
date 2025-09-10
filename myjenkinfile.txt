@@ -1,0 +1,47 @@
+pipeline {
+    agent any
+    environment {
+        DOCKERHUB_USER = 'tejaskandregula'   // only username here
+        IMAGE_NAME = 'apachewebsite'
+    }
+    stages {
+        stage('Clone Repo') {
+            steps {
+                git 'https://github.com/Tejas-kandregula/apachewebsite'
+            }
+        }
+        stage('Build & Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                usernameVariable: 'USER',
+                                passwordVariable: 'PASS')]) {
+                    sh """
+                        docker build -t $DOCKERHUB_USER/$IMAGE_NAME:latest .
+                        echo "$PASS" | docker login -u "$USER" --password-stdin
+                        docker push $DOCKERHUB_USER/$IMAGE_NAME:latest
+                        docker logout
+                    """
+                }
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                 sh 'kubectl apply -f k8s-deployment.yaml'
+                sh 'kubectl rollout status deployment/apachewebsite'
+            }
+        }
+        stage('Run Ansible Playbook') {
+            steps {
+                sh 'ansible-playbook install_apache.yml'
+            }
+        }
+    }
+    post {
+        success {
+            echo "✅ Deployment Successful! Access app at NodePort."
+        }
+        failure {
+            echo "❌ Deployment Failed. Check logs."
+        }
+    }
+}
