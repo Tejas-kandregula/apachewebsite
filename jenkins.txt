@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+    environment {
+        DOCKERHUB_USER = '<your-dockerhub-username>'
+        IMAGE_NAME = 'apachewebsite'
+    }
+    stages {
+        stage('Clean') {
+            steps {
+                echo 'Cleaning workspace, Docker, and Kubernetes...'
+                // Clean Jenkins workspace
+                deleteDir()
+                // Remove old Docker containers and images
+                sh '''
+                docker rm -f $(docker ps -aq) || true
+                docker rmi -f $(docker images -q) || true
+                '''
+                // Optional: delete Kubernetes deployment & service
+                sh '''
+                kubectl delete deployment apachewebsite --ignore-not-found
+                kubectl delete service apachewebsite-service --ignore-not-found
+                '''
+            }
+        }
+        stage('Clone Repo') {
+            steps {
+                git 'https://github.com/akshu20791/apachewebsite.git'
+            }
+        }
+        stage('Build & Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                usernameVariable: 'USER',
+                                passwordVariable: 'PASS')]) {
+                    sh """
+                        docker build -t $DOCKERHUB_USER/$IMAGE_NAME:latest .
+                        echo "$PASS" | docker login -u "$USER" --password-stdin
+                        docker push $DOCKERHUB_USER/$IMAGE_NAME:latest
+                        docker logout
+                    """
+                }
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh 'kubectl apply -f k8s-deployment.yaml --validate=false'
+                sh 'kubectl rollout status deployment/apachewebsite'
+            }
+        }
+        stage('Run Ansible Playbook') {
+            steps {
+                sh '/usr/bin/ansible-playbook install_apache.yml'
+            }
+        }
+    }
+    post {
+        success {
+            echo "✅ Deployment Successful!"
+        }
+        failure {
+            echo "❌ Deployment Failed. Check logs."
+        }
+    }
+}
